@@ -13,6 +13,38 @@ import (
 	"time"
 )
 
+type lockable struct {
+	Stats
+	
+	mu sync.RWMutex
+
+	readers int
+	writers int
+	touched time.Time
+}
+
+func (l *lockable) RLock() {
+	l.mu.RLock()
+	l.readers++
+	l.touched = time.Now()
+}
+
+func (l *lockable) RUnlock() {
+	l.readers--
+	l.mu.RUnlock()
+}
+
+func (l *lockable) Lock() {
+	l.mu.Lock()
+	l.writers++
+	l.touched = time.Now()
+}
+
+func (l *lockable) Unlock() {
+	l.writers--
+	l.mu.Unlock()
+}
+
 var (
 	listen = getEnv("CACHE_LISTEN", ":3333")
 	cacheDir = getEnv("CACHE_DIR", "./cache")
@@ -24,7 +56,7 @@ var (
 	reply503 = getEnv("CACHE_REPLY_503", "")
 	reply504 = getEnv("CACHE_REPLY_504", "")
 
-	locks = make(map[string]*sync.Mutex)
+	locks = make(map[string]*lockable)
 	mutex = &sync.RWMutex{}
 )
 
@@ -55,6 +87,24 @@ func sendPlain(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "text/plain")
 	w.Header().Set("Content-Length", strconv.Itoa(len(message)))
 	w.Write([]byte(message))
+}
+
+
+type Stats struct {
+	requests uint64
+	completed uint64
+	hits uint64
+	misses uint64
+	errors uint64
+}
+
+var stats Stats
+
+func (s *Stats) Report() {
+	log.Printf(
+		"requests: %d/%d, hit:miss %d:%d, errors: %d",
+		s.completed, s.requests, s.hits, s.misses, s.errors,
+	)
 }
 
 func serveFile(w http.ResponseWriter, filename string, eTags []string, ifModifiedSince time.Time, result string) error {
@@ -131,6 +181,9 @@ func serveFile(w http.ResponseWriter, filename string, eTags []string, ifModifie
 	w.Header().Set("Expires", meta.Retrieved.AddDate(1, 0, 0).Format(http.TimeFormat))	
 	w.Header().Set("ETag", meta.ETag)
 	w.Header().Set("X-Cache", SOFTWARE + " " + VERSION + "; " + result)
+
+	currentTime := time.Now()
+	_ = os.Chtimes(metaFile, currentTime, currentTime)
 
 	_, err = io.Copy(w, file)
 	if err != nil {
@@ -212,6 +265,18 @@ func fetchFile(filename string) (err error) {
 	return nil
 }
 
+func checkExists(filename string) bool {
+	metaFile := path.Join(cacheDir, filename + ".meta")
+	_, err := os.Stat(metaFile)
+	if err != nil {
+		return false
+	}
+
+	cacheFile := path.Join(cacheDir, filename)
+	_, err = os.Stat(cacheFile)
+	return err == nil
+}
+
 func getRoot(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("MediaCache 1.0\nhttps://git.hajkey.org/hajkey/mediacache"))
 }
@@ -234,6 +299,7 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 	if prefix != "" {
 		if !strings.HasPrefix(filename, prefix) {
 			http.Error(w, "invalid path", http.StatusBadRequest)
+			stats.errors++
 			return
 		}
 		filename = strings.TrimPrefix(filename, prefix)
@@ -244,26 +310,35 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 		strings.Contains(filename, "~") ||
 		strings.Contains(filename, "/") {
 		http.Error(w, "invalid path", http.StatusBadRequest)
+		stats.errors++
 		return
 	}
 
 	// Acquire a read lock for the file
-	mutex.Lock()
+	mutex.RLock()
 	lock, ok := locks[filename]
 	if !ok {
-		lock = &sync.Mutex{}
-	}
-	lock.Lock()
-	locks[filename] = lock
-	mutex.Unlock()
-
-	// Release the lock when we're done
-	defer func() {
+		mutex.RUnlock()
 		mutex.Lock()
-		delete(locks, filename)
+		lock, ok = locks[filename]
+		if !ok {
+			lock = &lockable{}
+			locks[filename] = lock
+		}
 		mutex.Unlock()
-		lock.Unlock()
+	} else {
+		mutex.RUnlock()
+	}
+
+	lock.RLock()
+	defer func ()  {
+		lock.RUnlock()
+		lock.completed++
+		stats.completed++
 	}()
+
+	lock.requests++
+	stats.requests++
 
 	// Check for If-Modified-Since header
 	var ifModifiedSince time.Time
@@ -272,6 +347,8 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Printf("error parsing If-Modified-Since header: %v", err)
 			http.Error(w, "error parsing If-Modified-Since header", http.StatusBadRequest)
+			lock.errors++
+			stats.errors++
 			return
 		}
 	}
@@ -294,26 +371,44 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	// Check if file exists in ./cache
-	err = serveFile(w, filename, eTags, ifModifiedSince, "HIT")
-	if err == nil {
-		return
+	if checkExists(filename) {
+		err = serveFile(w, filename, eTags, ifModifiedSince, "HIT")
+		if err == nil {
+			lock.hits++
+			stats.hits++
+			return
+		}
 	}
 
-	// File does not exist in cache, fetch it
-	err = fetchFile(filename)
-	if err != nil {
-		log.Printf("error fetching file: %v", err)
-		http.Error(w, "error fetching file", http.StatusInternalServerError)
-		return
+	lock.RUnlock()
+	lock.Lock()
+
+	if !checkExists(filename) {
+		// File does not exist in cache, fetch it
+		err = fetchFile(filename)
+		if err != nil {
+			log.Printf("error fetching file: %v", err)
+			http.Error(w, "error fetching file", http.StatusInternalServerError)
+			lock.errors++
+			stats.errors++
+			return
+		}
 	}
+
+	lock.Unlock()
+	lock.RLock()
 
 	// Serve the file
 	err = serveFile(w, filename, eTags, ifModifiedSince, "MISS")
 	if err != nil {
 		log.Printf("error serving file: %v", err)
 		http.Error(w, "error serving file", http.StatusInternalServerError)
+		lock.errors++
+		stats.errors++
 		return
 	}
+	lock.misses++
+	stats.misses++
 }
 
 func main() {
@@ -324,6 +419,14 @@ func main() {
 	log.Printf("upstream: %s", upstream)
 	log.Printf("cache dir: %s", cacheDir)
 	log.Printf("prefix: %s", prefix)
+
+	go func() {
+		tock := time.NewTicker(60 * time.Second)
+		for range tock.C {
+			stats.Report()
+		}
+	}()
+
 
 	log.Fatal(http.ListenAndServe(listen, nil))
 }
