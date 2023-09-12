@@ -237,7 +237,8 @@ func fetchFile(filename string) (err error) {
 	}
 	defer file.Close()
 
-	_, err = io.Copy(file, resp.Body)
+	var bytes int64
+	bytes, err = io.Copy(file, resp.Body)
 	if err != nil {
 		return err
 	}
@@ -252,6 +253,11 @@ func fetchFile(filename string) (err error) {
 		}
 	}
 
+	size := resp.ContentLength
+	if size <= 0 {
+		size = bytes
+	}
+
 	meta := fileMeta{
 		Status: resp.StatusCode,
 		Source: url,
@@ -259,7 +265,7 @@ func fetchFile(filename string) (err error) {
 		Retrieved: time.Now(),
 		LastModified: lastModified,
 		ETag: resp.Header.Get("ETag"),
-		Size: resp.ContentLength,
+		Size: size,
 	}
 
 	var metaData []byte
