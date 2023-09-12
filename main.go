@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,6 +61,13 @@ var (
 	reply503 = getEnv("CACHE_REPLY_503", "")
 	reply504 = getEnv("CACHE_REPLY_504", "")
 
+	printStats = getEnv("CACHE_PRINT_STATS", true)
+
+	maxCacheFiles = getEnv[int64]("CACHE_MAX_FILES", 10_000)
+	maxCacheSize = getEnv[int64]("CACHE_MAX_SIZE", 1_000_000_000)
+	cacheClean = getEnv("CACHE_CLEAN", true)
+	dryRun = getEnv("CACHE_DRY_RUN", false)
+
 	locks = make(map[string]*lockable)
 	mutex = &sync.RWMutex{}
 )
@@ -68,9 +77,31 @@ const (
 	VERSION = "v1.0"
 )
 
-func getEnv(key, fallback string) string {
+func getEnv[T int64 | string | bool](key string, fallback T) (result T) {
 	if value, ok := os.LookupEnv(key); ok {
-		return value
+		var err error
+
+		switch any(result).(type) {
+		case int64:	
+			var i int64
+			i, err = strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				log.Fatalf("invalid value for %s: %v", key, err)
+			}
+			result = any(i).(T)
+		
+		case bool:
+			var b bool
+			b, err = strconv.ParseBool(value)
+			if err != nil {
+				log.Fatalf("invalid value for %s: %v", key, err)
+			}
+			result = any(b).(T)
+
+		case string:
+			result = any(value).(T)
+		}
+		return result
 	}
 
 	return fallback
@@ -86,58 +117,82 @@ type fileMeta struct {
 	Size int64
 }
 
-func sendPlain(w http.ResponseWriter, message string) {
+func sendPlain(w http.ResponseWriter, message string) int64 {
 	w.Header().Set("Content-Type", "text/plain")
 	w.Header().Set("Content-Length", strconv.Itoa(len(message)))
-	w.Write([]byte(message))
+	bytes, _ := w.Write([]byte(message))
+	return int64(bytes)
 }
-
 
 type Stats struct {
 	name string
 	requests uint64
 	completed uint64
 	disconnects uint64
+	sentBytes uint64
+	receivedBytes uint64
+	
 	hits uint64
+	hitBytes uint64
 	misses uint64
+	missBytes uint64
 	errors uint64
 }
 
 var stats Stats = Stats{name: "TOTALS"}
 
 func (s *Stats) Report(extra ...string) {
+	if (!printStats) {
+		return
+	}
+
 	rate := fmt.Sprintf("%3.1f×", float64(s.hits) / float64(s.misses))
 	if s.misses == 0 {
 		rate = "∞"
 	}
+
+	sentMB := float64(s.sentBytes) / 1024 / 1024
+	receivedMB := float64(s.receivedBytes) / 1024 / 1024
+	transferRate := fmt.Sprintf("%3.01f×", sentMB / receivedMB)
+	if receivedMB == 0 {
+		transferRate = "∞"
+	}
+
 	log.Printf(
-		"req: %6d/%-6d  %3dd/c  hit %6d:%-6d %s  err: %d  %s%s",
+		"%s%s\n" +
+		"req: %6d/%-6d  %3d dc  hit %6d:%-6d %-6s  err: %d\n" +
+		"sent: %8.01fMB  recv: %8.01fMB %s",
+		s.name,
+		strings.Join(extra, ""),
 		s.completed, s.requests, s.disconnects,
 		s.hits, s.misses, rate,
 		s.errors,
-		s.name,
-		strings.Join(extra, ""),
+		float64(s.sentBytes) / 1024 / 1024,
+		float64(s.receivedBytes) / 1024 / 1024,
+		transferRate,
 	)
 }
 
-func serveFile(w http.ResponseWriter, filename string, eTags []string, ifModifiedSince time.Time, result string) error {
+func serveFile(w http.ResponseWriter, filename string, eTags []string, ifModifiedSince time.Time, result string) (n int64, err error) {
 	metaFile := path.Join(cacheDir, filename + ".meta")
 	metaData, err := os.ReadFile(metaFile)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	var meta fileMeta
 	err = json.Unmarshal(metaData, &meta)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	dataFile := path.Join(cacheDir, filename)
 	file, err := os.Open(dataFile)
 	if err != nil {
-		return err
+		return 0, err
 	}
+
+	var bytes int64
 
 	if meta.Status != 200 {
 		w.WriteHeader(meta.Status)
@@ -145,35 +200,35 @@ func serveFile(w http.ResponseWriter, filename string, eTags []string, ifModifie
 
 		switch {
 		case meta.Status == 403 && reply403 != "":
-			sendPlain(w, reply403)
-			return nil
+			bytes = sendPlain(w, reply403)
+			return bytes, nil
 		case meta.Status == 404 && reply404 != "":
-			sendPlain(w, reply404)
-			return nil
+			bytes = sendPlain(w, reply404)
+			return bytes, nil
 		case meta.Status == 500 && reply500 != "":
-			sendPlain(w, reply500)
-			return nil
+			bytes = sendPlain(w, reply500)
+			return bytes, nil
 		case meta.Status == 503 && reply503 != "":
-			sendPlain(w, reply503)
-			return nil
+			bytes = sendPlain(w, reply503)
+			return bytes, nil
 		case meta.Status == 504 && reply504 != "":
-			sendPlain(w, reply504)
-			return nil
+			bytes = sendPlain(w, reply504)
+			return bytes, nil
 		}
 
-		_, err = io.Copy(w, file)
+		bytes, err = io.Copy(w, file)
 		if err != nil {
-			return err
+			return bytes, err
 		}
 
-		return nil
+		return bytes, nil
 	}
 
 	// Check if file is modified since
 	if !meta.LastModified.IsZero() && !ifModifiedSince.IsZero() && meta.LastModified.Before(ifModifiedSince) {
 		w.WriteHeader(http.StatusNotModified)
 		w.Header().Set("X-Cache", SOFTWARE + " " + VERSION + "; " + result)
-		return nil
+		return 0, nil
 	}
 
 	// Check if file has matching ETag
@@ -182,7 +237,7 @@ func serveFile(w http.ResponseWriter, filename string, eTags []string, ifModifie
 		if tag == meta.ETag {
 			w.WriteHeader(http.StatusNotModified)
 			w.Header().Set("X-Cache", SOFTWARE + " " + VERSION + "; " + result)
-			return nil
+			return 0, nil
 		}
 	}
 
@@ -198,18 +253,18 @@ func serveFile(w http.ResponseWriter, filename string, eTags []string, ifModifie
 	currentTime := time.Now()
 	_ = os.Chtimes(metaFile, currentTime, currentTime)
 
-	_, err = io.Copy(w, file)
+	bytes, err = io.Copy(w, file)
 	if err != nil {
-		return err
+		return bytes, err
 	}
-	return nil
+	return bytes, nil
 }
 
 func joinUrl(base, path string) string {
 	return strings.TrimSuffix(base, "/") + "/" + strings.TrimPrefix(path, "/")
 }
 
-func fetchFile(filename string) (err error) {
+func fetchFile(filename string) (n int64, err error) {
 	url := joinUrl(upstream, filename)
 	metaFile := path.Join(cacheDir, filename + ".meta")
 	cacheFile := path.Join(cacheDir, filename)
@@ -225,7 +280,7 @@ func fetchFile(filename string) (err error) {
 	var resp *http.Response
 	resp, err = http.Get(url)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
 
@@ -233,14 +288,14 @@ func fetchFile(filename string) (err error) {
 	var file *os.File
 	file, err = os.Create(cacheFile)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer file.Close()
 
 	var bytes int64
 	bytes, err = io.Copy(file, resp.Body)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	// Add metadata to cache
@@ -249,7 +304,7 @@ func fetchFile(filename string) (err error) {
 	if modified != "" {
 		lastModified, err = time.Parse(http.TimeFormat, modified)
 		if err != nil {
-			return err
+			return bytes, err
 		}
 	}
 
@@ -271,17 +326,17 @@ func fetchFile(filename string) (err error) {
 	var metaData []byte
 	metaData, err = json.Marshal(meta)
 	if err != nil {
-		return err
+		return bytes, err
 	}
 	metaData = append(metaData, '\n')
 
 	metaFile = path.Join(cacheDir, filename + ".meta")
 	err = os.WriteFile(metaFile, metaData, 0644)
 	if err != nil {
-		return err
+		return bytes, err
 	}
 
-	return nil
+	return bytes, nil
 }
 
 func checkExists(filename string) bool {
@@ -360,6 +415,8 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 		stats.completed++
 	}()
 
+	var n int64
+
 	lock.requests++
 	stats.requests++
 
@@ -395,7 +452,7 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 	
 	// Check if file exists in ./cache
 	if checkExists(filename) {
-		err = serveFile(w, filename, eTags, ifModifiedSince, "HIT")
+		n, err = serveFile(w, filename, eTags, ifModifiedSince, "HIT")
 
 		// Client disconnected, ignore
 		disconnect := errors.Is(err, syscall.EPIPE)
@@ -403,6 +460,10 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 		if err == nil || disconnect {
 			lock.hits++
 			stats.hits++
+			lock.hitBytes += uint64(n)
+			stats.hitBytes += uint64(n)
+			lock.sentBytes += uint64(n)
+			stats.sentBytes += uint64(n)
 			return
 		}
 	}
@@ -413,12 +474,14 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 
 	if !checkExists(filename) {
 		// File does not exist in cache, fetch it
-		err = fetchFile(filename)
+		n, err = fetchFile(filename)
 		if err != nil {
 			log.Printf("error fetching file: %v", err)
 			http.Error(w, "error fetching file", http.StatusInternalServerError)
 			lock.errors++
 			stats.errors++
+			lock.sentBytes += uint64(n)
+			stats.sentBytes += uint64(n)
 			lock.Unlock()
 			return
 		}
@@ -429,7 +492,7 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 	rLocked = true
 
 	// Serve the file
-	err = serveFile(w, filename, eTags, ifModifiedSince, "MISS")
+	n, err = serveFile(w, filename, eTags, ifModifiedSince, "MISS")
 
 	// Client disconnected, ignore
 	disconnect := errors.Is(err, syscall.EPIPE)
@@ -439,15 +502,23 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error serving file", http.StatusInternalServerError)
 		lock.errors++
 		stats.errors++
+		lock.sentBytes += uint64(n)
+		stats.sentBytes += uint64(n)
 		return
 	}
 
 	if disconnect {
 		lock.disconnects++
 		stats.disconnects++
+		lock.sentBytes += uint64(n)
+		stats.sentBytes += uint64(n)
 	}
 	lock.misses++
 	stats.misses++
+	lock.missBytes += uint64(n)
+	stats.missBytes += uint64(n)
+	lock.sentBytes += uint64(n)
+	stats.sentBytes += uint64(n)
 }
 
 func main() {
@@ -464,7 +535,7 @@ func main() {
 		c := 0
 		for range tock.C {
 			c++
-			if c % 10 == 0 {
+			if c % 10 == 0 && printStats {
 				mutex.Lock()
 				for filename, lock := range locks {
 					extra := ""
@@ -475,6 +546,83 @@ func main() {
 					lock.Report(extra)
 				}
 				mutex.Unlock()
+			}
+
+			if (c % 60) == 0 && cacheClean {
+				log.Print("cleaning cache")
+				mutex.Lock()
+				dir, err := os.ReadDir(cacheDir)
+				if err != nil {
+					log.Printf("error reading cache dir: %v", err)
+				}
+
+				type fileInfo struct{
+					info fs.FileInfo
+					score float64
+				}
+				
+				var totalSize int64
+				var totalCount int64
+				var fileList []fileInfo
+
+				for _, entry := range dir {
+					if strings.HasSuffix(entry.Name(), ".meta") {
+						continue
+					}
+
+					entryName := entry.Name()
+					info, err := entry.Info()
+					if err != nil {
+						log.Printf("error reading file info %s: %v", entryName, err)
+						continue
+					}
+
+					size := float64(info.Size()) / 1024 / 1024
+					age := time.Since(info.ModTime()).Hours()
+					fileData := path.Join(cacheDir, entryName)
+					fileMeta := path.Join(cacheDir, entryName + ".meta")
+					metaInfo, err := os.Stat(fileMeta)
+					if err != nil {
+						log.Printf("error reading file info %s: %v", metaInfo.Name(), err)
+						if !dryRun {
+							_ = os.Remove(fileData)
+							_ = os.Remove(fileMeta)
+						}
+						continue
+					}
+					lastRead := time.Since(metaInfo.ModTime()).Hours()
+
+					// big old file without recent reads score higher:
+					score := size * age * lastRead
+
+					totalSize += info.Size()
+					fileList = append(fileList, fileInfo{
+						info: info,
+						score: score,
+					})
+				}
+
+				// Sort files by score
+				sort.Slice(fileList, func(i, j int) bool {
+					// Return lowest scores first
+					return fileList[i].score < fileList[j].score
+				})
+
+				// Remove files once over our limits
+				for _, file := range fileList {
+					totalCount++
+					totalSize += file.info.Size()
+
+					if totalSize < maxCacheSize && totalCount < maxCacheFiles {
+						continue
+					}
+
+					log.Printf("removing %s", file.info.Name())
+					if !dryRun {
+						_ = os.Remove(path.Join(cacheDir, file.info.Name()))
+						_ = os.Remove(path.Join(cacheDir, file.info.Name() + ".meta"))
+					}
+				}
 			}
 
 			stats.Report()
