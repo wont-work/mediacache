@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -91,19 +93,25 @@ func sendPlain(w http.ResponseWriter, message string) {
 
 
 type Stats struct {
+	name string
 	requests uint64
 	completed uint64
+	disconnects uint64
 	hits uint64
 	misses uint64
 	errors uint64
 }
 
-var stats Stats
+var stats Stats = Stats{name: "TOTALS"}
 
-func (s *Stats) Report() {
+func (s *Stats) Report(extra ...string) {
 	log.Printf(
-		"requests: %d/%d, hit:miss %d:%d, errors: %d",
-		s.completed, s.requests, s.hits, s.misses, s.errors,
+		"req: %-6d/%6d %3dd/c  hit %-6d:%6d (%2.1f×)  err: %d  %s%s",
+		s.completed, s.requests, s.disconnects,
+		s.hits, s.misses, float64(s.hits) / float64(s.misses),
+		s.errors,
+		s.name,
+		strings.Join(extra, ""),
 	)
 }
 
@@ -323,6 +331,7 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 		lock, ok = locks[filename]
 		if !ok {
 			lock = &lockable{}
+			lock.name = filename
 			locks[filename] = lock
 		}
 		mutex.Unlock()
@@ -373,7 +382,11 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 	// Check if file exists in ./cache
 	if checkExists(filename) {
 		err = serveFile(w, filename, eTags, ifModifiedSince, "HIT")
-		if err == nil {
+
+		// Client disconnected, ignore
+		disconnect := errors.Is(err, syscall.EPIPE)
+
+		if err == nil || disconnect {
 			lock.hits++
 			stats.hits++
 			return
@@ -400,12 +413,21 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 
 	// Serve the file
 	err = serveFile(w, filename, eTags, ifModifiedSince, "MISS")
-	if err != nil {
+
+	// Client disconnected, ignore
+	disconnect := errors.Is(err, syscall.EPIPE)
+
+	if err != nil && !disconnect {
 		log.Printf("error serving file: %v", err)
 		http.Error(w, "error serving file", http.StatusInternalServerError)
 		lock.errors++
 		stats.errors++
 		return
+	}
+
+	if disconnect {
+		lock.disconnects++
+		stats.disconnects++
 	}
 	lock.misses++
 	stats.misses++
@@ -422,7 +444,22 @@ func main() {
 
 	go func() {
 		tock := time.NewTicker(60 * time.Second)
+		c := 0
 		for range tock.C {
+			c++
+			if c % 10 == 0 {
+				mutex.Lock()
+				for filename, lock := range locks {
+					extra := ""
+					if lock.readers == 0 && lock.writers == 0 && time.Since(lock.touched) > 10 * time.Minute {
+						delete(locks, filename)
+						extra = " (expired)"
+					}
+					lock.Report(extra)
+				}
+				mutex.Unlock()
+			}
+
 			stats.Report()
 		}
 	}()
