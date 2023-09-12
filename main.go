@@ -106,7 +106,7 @@ var stats Stats = Stats{name: "TOTALS"}
 
 func (s *Stats) Report(extra ...string) {
 	log.Printf(
-		"req: %-6d/%6d %3dd/c  hit %-6d:%6d (%2.1f×)  err: %d  %s%s",
+		"req: %6d/%-6d  %3dd/c  hit %6d:%-6d (%2.1f×)  err: %d  %s%s",
 		s.completed, s.requests, s.disconnects,
 		s.hits, s.misses, float64(s.hits) / float64(s.misses),
 		s.errors,
