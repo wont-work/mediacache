@@ -345,8 +345,11 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lock.RLock()
+	rLocked := true
 	defer func ()  {
-		lock.RUnlock()
+		if rLocked {
+			lock.RUnlock()
+		}
 		lock.completed++
 		stats.completed++
 	}()
@@ -399,7 +402,7 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lock.RUnlock()
-	lock.Lock()
+	rLocked = false
 
 	if !checkExists(filename) {
 		// File does not exist in cache, fetch it
@@ -409,12 +412,14 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "error fetching file", http.StatusInternalServerError)
 			lock.errors++
 			stats.errors++
+			lock.Unlock()
 			return
 		}
 	}
 
 	lock.Unlock()
 	lock.RLock()
+	rLocked = true
 
 	// Serve the file
 	err = serveFile(w, filename, eTags, ifModifiedSince, "MISS")
