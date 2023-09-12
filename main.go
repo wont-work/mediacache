@@ -403,6 +403,7 @@ func handleFiles(w http.ResponseWriter, r *http.Request) {
 
 	lock.RUnlock()
 	rLocked = false
+	lock.Lock()
 
 	if !checkExists(filename) {
 		// File does not exist in cache, fetch it
