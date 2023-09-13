@@ -140,6 +140,8 @@ func serveFile(w http.ResponseWriter, filename string, eTags []string, ifModifie
 
 	if maxAge > 0 && time.Since(meta.Retrieved).Hours() > float64(maxAge) {
 		// File is too old, fetch a new one
+		_ = os.Remove(metaFile)
+		_ = os.Remove(dataFile)
 		return 0, ErrCacheExpired
 	}
 
