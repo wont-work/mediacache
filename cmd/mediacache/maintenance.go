@@ -135,6 +135,10 @@ func reportStats() {
 }
 
 func maintain() {
+	if cacheClean {
+		cleanCache()
+	}
+
 	tock := time.NewTicker(60 * time.Second)
 	c := 0
 	for range tock.C {
