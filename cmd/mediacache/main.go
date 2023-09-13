@@ -25,7 +25,7 @@ var (
 	printStats = getEnv("CACHE_PRINT_STATS", true)
 
 	maxCacheFiles = getEnv[int64]("CACHE_MAX_FILES", 10_000)
-	maxCacheSize  = float64(getEnv[int64]("CACHE_MAX_SIZE", 1_000_000_000))
+	maxCacheSize  = float64(getEnv[int64]("CACHE_MAX_SIZE_MB", 1_000))
 	cacheClean    = getEnv("CACHE_CLEAN", true)
 	dryRun        = getEnv("CACHE_DRY_RUN", false)
 
