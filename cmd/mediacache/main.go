@@ -26,6 +26,7 @@ var (
 
 	maxCacheFiles = getEnv[int64]("CACHE_MAX_FILES", 10_000)
 	maxCacheSize  = float64(getEnv[int64]("CACHE_MAX_SIZE_MB", 1_000))
+	maxAge		= float64(getEnv[int64]("CACHE_MAX_AGE_HOURS", 3))
 	cacheClean    = getEnv("CACHE_CLEAN", true)
 	dryRun        = getEnv("CACHE_DRY_RUN", false)
 

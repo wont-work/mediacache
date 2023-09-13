@@ -57,6 +57,17 @@ func cleanCache() {
 			}
 			continue
 		}
+
+		if maxAge > 0 && age > float64(maxAge) {
+			if !dryRun {
+				log.Printf("removing %s\n  (age: %.01fh > %.01fh)", entryName, age, maxAge)
+				_ = os.Remove(fileData)
+				_ = os.Remove(fileMeta)
+			} else {
+				log.Printf("would remove %s\n  (age: %.01fh > %.01fh)", entryName, age, maxAge)	
+			}
+		}
+		
 		used := time.Since(metaInfo.ModTime()).Hours()
 
 		// big old file without recent reads score higher:

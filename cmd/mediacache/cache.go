@@ -11,6 +11,15 @@ import (
 	"time"
 )
 
+const (
+	ErrCacheExpired = ErrorStr("cache expired")
+)
+
+type ErrorStr string
+func (e ErrorStr) Error() string {
+	return string(e)
+}
+
 type fileMeta struct {
 	Source       string
 	Status       int
@@ -128,6 +137,11 @@ func serveFile(w http.ResponseWriter, filename string, eTags []string, ifModifie
 	}
 
 	var bytes int64
+
+	if maxAge > 0 && time.Since(meta.Retrieved).Hours() > float64(maxAge) {
+		// File is too old, fetch a new one
+		return 0, ErrCacheExpired
+	}
 
 	if meta.Status != 200 {
 		w.WriteHeader(meta.Status)
