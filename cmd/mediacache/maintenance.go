@@ -105,20 +105,23 @@ func cleanCache() {
 					file.info.Name(),
 					file.age, file.size, file.used,
 					targetCount, maxCacheFiles,
-					float64(targetSize)/1024/1024,
-					float64(maxCacheSize)/1024/1024,
+					targetSize,
+					maxCacheSize,
 					file.score,
 				)
 				_ = os.Remove(path.Join(cacheDir, file.info.Name()))
 				_ = os.Remove(path.Join(cacheDir, file.info.Name()+".meta"))
 			} else {
 				log.Printf(
-					"would remove (%d > %d files / %0.01f > %0.01fMb, score: %.03f) %s",
-					targetCount, maxCacheFiles,
-					float64(targetSize)/1024/1024,
-					float64(maxCacheSize)/1024/1024,
-					file.score,
+					"would remove %s\n"+
+						"  age: %.01fh size: %.01fMb  used: %.01fh\n"+
+						"(%d > %d files / %0.01f > %0.01fMb, score: %.03f)",
 					file.info.Name(),
+					file.age, file.size, file.used,
+					targetCount, maxCacheFiles,
+					targetSize,
+					maxCacheSize,
+					file.score,
 				)
 			}
 		}
