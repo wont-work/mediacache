@@ -13,6 +13,8 @@ import (
 func cleanCache() {
 	log.Print("cleaning cache")
 	mutex.Lock()
+	defer mutex.Unlock()
+
 	dir, err := os.ReadDir(cacheDir)
 	if err != nil {
 		log.Printf("error reading cache dir: %v", err)
@@ -26,7 +28,7 @@ func cleanCache() {
 		used  float64
 	}
 
-	var totalSize int64
+	var totalSize float64
 	var totalCount int64
 	var fileList []fileInfo
 
@@ -60,7 +62,7 @@ func cleanCache() {
 		// big old file without recent reads score higher:
 		score := size * age * used
 
-		totalSize += info.Size()
+		totalSize += size
 		fileList = append(fileList, fileInfo{
 			info:  info,
 			score: score,
@@ -77,37 +79,44 @@ func cleanCache() {
 	})
 
 	// Remove files once over our limits
-	for _, file := range fileList {
-		totalCount++
-		totalSize += file.info.Size()
+	if totalCount > maxCacheFiles || totalSize > maxCacheSize {
+		log.Printf("cache size: %.01fMb (%d files)", totalSize, totalCount)
 
-		if totalSize < maxCacheSize && totalCount < maxCacheFiles {
-			continue
-		}
+		var targetCount int64
+		var targetSize float64
 
-		if !dryRun {
-			log.Printf(
-				"removing %s\n"+
-					"  age: %.01fh size: %.01fMb  used: %.01fh\n"+
-					"(%d > %d files / %0.01f > %0.01fMb, score: %.03f)",
-				file.info.Name(),
-				file.age, file.size, file.used,
-				totalCount, maxCacheFiles,
-				float64(totalSize)/1024/1024,
-				float64(maxCacheSize)/1024/1024,
-				file.score,
-			)
-			_ = os.Remove(path.Join(cacheDir, file.info.Name()))
-			_ = os.Remove(path.Join(cacheDir, file.info.Name()+".meta"))
-		} else {
-			log.Printf(
-				"would remove (%d > %d files / %0.01f > %0.01fMb, score: %.03f) %s",
-				totalCount, maxCacheFiles,
-				float64(totalSize)/1024/1024,
-				float64(maxCacheSize)/1024/1024,
-				file.score,
-				file.info.Name(),
-			)
+		for _, file := range fileList {
+			targetCount++
+			targetSize += float64(file.info.Size()) / 1024 / 1024
+
+			if targetSize < maxCacheSize && targetCount < maxCacheFiles {
+				continue
+			}
+
+			if !dryRun {
+				log.Printf(
+					"removing %s\n"+
+						"  age: %.01fh size: %.01fMb  used: %.01fh\n"+
+						"(%d > %d files / %0.01f > %0.01fMb, score: %.03f)",
+					file.info.Name(),
+					file.age, file.size, file.used,
+					targetCount, maxCacheFiles,
+					float64(targetSize)/1024/1024,
+					float64(maxCacheSize)/1024/1024,
+					file.score,
+				)
+				_ = os.Remove(path.Join(cacheDir, file.info.Name()))
+				_ = os.Remove(path.Join(cacheDir, file.info.Name()+".meta"))
+			} else {
+				log.Printf(
+					"would remove (%d > %d files / %0.01f > %0.01fMb, score: %.03f) %s",
+					targetCount, maxCacheFiles,
+					float64(targetSize)/1024/1024,
+					float64(maxCacheSize)/1024/1024,
+					file.score,
+					file.info.Name(),
+				)
+			}
 		}
 	}
 }
