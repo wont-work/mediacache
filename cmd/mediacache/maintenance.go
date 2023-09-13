@@ -66,8 +66,9 @@ func cleanCache() {
 			} else {
 				log.Printf("would remove %s\n  (age: %.01fh > %.01fh)", entryName, age, maxAge)	
 			}
+			continue
 		}
-		
+
 		used := time.Since(metaInfo.ModTime()).Hours()
 
 		// big old file without recent reads score higher:
