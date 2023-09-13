@@ -101,7 +101,7 @@ func cleanCache() {
 				log.Printf(
 					"removing %s\n"+
 						"  age: %.01fh size: %.01fMb  used: %.01fh\n"+
-						"(%d > %d files / %0.01f > %0.01fMb, score: %.03f)",
+						"  (%d > %d files / %0.01f > %0.01fMb, score: %.03f)",
 					file.info.Name(),
 					file.age, file.size, file.used,
 					targetCount, maxCacheFiles,
@@ -115,7 +115,7 @@ func cleanCache() {
 				log.Printf(
 					"would remove %s\n"+
 						"  age: %.01fh size: %.01fMb  used: %.01fh\n"+
-						"(%d > %d files / %0.01f > %0.01fMb, score: %.03f)",
+						"  (%d > %d files / %0.01f > %0.01fMb, score: %.03f)",
 					file.info.Name(),
 					file.age, file.size, file.used,
 					targetCount, maxCacheFiles,
