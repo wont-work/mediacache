@@ -78,10 +78,14 @@ func cleanCache() {
 		return fileList[i].score < fileList[j].score
 	})
 
+	log.Printf(
+		"cache size: %.01f/%.01fMb (%d/%d files)",
+		totalSize, maxCacheSize,
+		totalCount, maxCacheFiles,
+	)
+
 	// Remove files once over our limits
 	if totalCount > maxCacheFiles || totalSize > maxCacheSize {
-		log.Printf("cache size: %.01fMb (%d files)", totalSize, totalCount)
-
 		var targetCount int64
 		var targetSize float64
 
