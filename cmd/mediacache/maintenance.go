@@ -50,7 +50,7 @@ func cleanCache() {
 		fileMeta := path.Join(cacheDir, entryName+".meta")
 		metaInfo, err := os.Stat(fileMeta)
 		if err != nil {
-			log.Printf("error reading meta info %s: %v", metaInfo.Name(), err)
+			log.Printf("error reading meta info %s: %v", fileMeta, err)
 			if !dryRun {
 				_ = os.Remove(fileData)
 				_ = os.Remove(fileMeta)
@@ -64,7 +64,7 @@ func cleanCache() {
 				_ = os.Remove(fileData)
 				_ = os.Remove(fileMeta)
 			} else {
-				log.Printf("would remove %s\n  (age: %.01fh > %.01fh)", entryName, age, maxAge)	
+				log.Printf("would remove %s\n  (age: %.01fh > %.01fh)", entryName, age, maxAge)
 			}
 			continue
 		}
