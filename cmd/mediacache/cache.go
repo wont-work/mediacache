@@ -44,7 +44,6 @@ func checkExists(filename string) bool {
 }
 
 func fetchFile(filename string) (n int64, err error) {
-	url := joinUrl(upstream, filename)
 	metaFile := path.Join(cacheDir, filename+".meta")
 	cacheFile := path.Join(cacheDir, filename)
 
@@ -57,7 +56,15 @@ func fetchFile(filename string) (n int64, err error) {
 
 	// Get file from source
 	var resp *http.Response
-	resp, err = http.Get(url)
+	var url string
+	for _, upstream := range upstreams {
+		url = joinUrl(upstream, filename)
+		resp, err = http.Get(url)
+		if err == nil && resp.StatusCode == 200 {
+			break
+		}
+	}
+
 	if err != nil {
 		return 0, err
 	}
