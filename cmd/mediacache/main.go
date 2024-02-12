@@ -8,7 +8,7 @@ import (
 
 const (
 	SOFTWARE   = "MediaCache"
-	VERSION    = "v1.0"
+	VERSION    = "v1.0+kopper1"
 	GITHUB_URL = "https://git.hajkey.org/hajkey/mediacache"
 )
 

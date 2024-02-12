@@ -50,7 +50,7 @@ func handleCache(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if prefix != "" {
+	/*if prefix != "" {
 		if !strings.HasPrefix(filename, prefix) {
 			log.Printf("error with request for `%s`, no match to prefix: %s", filename, prefix);
 			http.Error(w, "invalid path", http.StatusBadRequest)
@@ -58,12 +58,11 @@ func handleCache(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		filename = strings.TrimPrefix(filename, prefix)
-	}
+	}*/
 
 	// Check for invalid characters
 	if strings.Contains(filename, "..") ||
-		strings.Contains(filename, "~") ||
-		strings.Contains(filename, "/") {
+		strings.Contains(filename, "~") {
 		log.Printf("error with request for `%s`, contains invalid character", filename)
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		stats.errors++
