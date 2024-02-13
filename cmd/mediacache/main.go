@@ -9,7 +9,7 @@ import (
 const (
 	SOFTWARE   = "MediaCache"
 	VERSION    = "v1.0+kopper1"
-	GITHUB_URL = "https://git.hajkey.org/hajkey/mediacache"
+	GITHUB_URL = "https://github.com/ShittyKopper/mediacache"
 )
 
 var (
