@@ -69,6 +69,8 @@ func handleCache(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	filename = hashUrl(filename)
+
 	// Acquire a read lock for the file
 	mutex.RLock()
 	lock, ok := locks[filename]
@@ -155,7 +157,7 @@ func handleCache(w http.ResponseWriter, r *http.Request) {
 
 	if !checkExists(filename) {
 		// File does not exist in cache, fetch it
-		n, err = fetchFile(filename)
+		n, err = fetchFile(r.URL.Path)
 		if err != nil {
 			log.Printf("error fetching file: %v", err)
 			http.Error(w, "error fetching file", http.StatusInternalServerError)

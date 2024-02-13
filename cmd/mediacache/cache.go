@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"crypto/sha256"
+	"encoding/base64"
 )
 
 const (
@@ -99,6 +101,13 @@ func parseRangeHeader(rangeHeader string, fileSize int64) (*rangeRequest, error)
 	}, nil
 }
 
+func hashUrl(url string) string {
+	sha := sha256.New()
+	sha.Write([]byte(url))
+	encoded := base64.URLEncoding.EncodeToString(sha.Sum(nil))
+	return strings.ReplaceAll(encoded, "=", "")
+}
+
 func checkExists(filename string) bool {
 	metaFile := path.Join(cacheDir, filename+".meta")
 	_, err := os.Stat(metaFile)
@@ -111,7 +120,8 @@ func checkExists(filename string) bool {
 	return err == nil
 }
 
-func fetchFile(filename string) (n int64, err error) {
+func fetchFile(origFilename string) (n int64, err error) {
+	filename := hashUrl(origFilename)
 	metaFile := path.Join(cacheDir, filename+".meta")
 	cacheFile := path.Join(cacheDir, filename)
 
@@ -126,7 +136,7 @@ func fetchFile(filename string) (n int64, err error) {
 	var resp *http.Response
 	var url string
 	for _, upstream := range upstreams {
-		url = joinUrl(upstream, filename)
+		url = joinUrl(upstream, origFilename)
 		resp, err = httpClient.Get(url)
 		if err == nil && resp.StatusCode == 200 {
 			break
