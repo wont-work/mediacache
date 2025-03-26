@@ -40,7 +40,10 @@ func handleCache(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	// Get filename from URL
-	filename := r.URL.Path
+	path := r.URL.Path
+	query := r.URL.RawQuery
+
+	filename := path + "?" + query
 
 	if filename == "/" {
 		getRoot(w, r)
@@ -49,6 +52,7 @@ func handleCache(w http.ResponseWriter, r *http.Request) {
 
 	if prefix != "" {
 		if !strings.HasPrefix(filename, prefix) {
+			log.Printf("error with request for `%s`, no match to prefix: %s", filename, prefix);
 			http.Error(w, "invalid path", http.StatusBadRequest)
 			stats.errors++
 			return
@@ -60,6 +64,7 @@ func handleCache(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(filename, "..") ||
 		strings.Contains(filename, "~") ||
 		strings.Contains(filename, "/") {
+		log.Printf("error with request for `%s`, contains invalid character", filename)
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		stats.errors++
 		return

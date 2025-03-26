@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path"
@@ -14,6 +15,10 @@ import (
 const (
 	ErrCacheExpired = ErrorStr("cache expired")
 )
+
+var httpClient = &http.Client{
+	Timeout: 60 * time.Second,
+}
 
 type ErrorStr string
 
@@ -59,10 +64,11 @@ func fetchFile(filename string) (n int64, err error) {
 	var url string
 	for _, upstream := range upstreams {
 		url = joinUrl(upstream, filename)
-		resp, err = http.Get(url)
+		resp, err = httpClient.Get(url)
 		if err == nil && resp.StatusCode == 200 {
 			break
 		}
+		log.Printf("url %s: %v", url, err)
 	}
 
 	if err != nil {
@@ -74,6 +80,7 @@ func fetchFile(filename string) (n int64, err error) {
 	var file *os.File
 	file, err = os.Create(cacheFile)
 	if err != nil {
+		log.Printf("error creating file: %v", err)
 		return 0, err
 	}
 	defer file.Close()
@@ -81,6 +88,7 @@ func fetchFile(filename string) (n int64, err error) {
 	var bytes int64
 	bytes, err = io.Copy(file, resp.Body)
 	if err != nil {
+		log.Printf("error writing file: %d, %v", bytes, err)
 		return 0, err
 	}
 
