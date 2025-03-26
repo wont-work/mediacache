@@ -134,7 +134,7 @@ func handleCache(w http.ResponseWriter, r *http.Request) {
 
 	// Check if file exists in ./cache
 	if checkExists(filename) {
-		n, err = serveFile(w, filename, eTags, ifModifiedSince, "HIT")
+		n, err = serveFile(w, r, filename, eTags, ifModifiedSince, "HIT")
 
 		// Client disconnected, ignore
 		disconnect := errors.Is(err, syscall.EPIPE)
@@ -174,7 +174,7 @@ func handleCache(w http.ResponseWriter, r *http.Request) {
 	rLocked = true
 
 	// Serve the file
-	n, err = serveFile(w, filename, eTags, ifModifiedSince, "MISS")
+	n, err = serveFile(w, r, filename, eTags, ifModifiedSince, "MISS")
 
 	// Client disconnected, ignore
 	disconnect := errors.Is(err, syscall.EPIPE)

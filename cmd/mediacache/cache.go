@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -34,6 +35,68 @@ type fileMeta struct {
 	Retrieved    time.Time
 	ETag         string
 	Size         int64
+}
+
+type rangeRequest struct {
+	start  int64
+	end    int64
+	length int64
+}
+
+func parseRangeHeader(rangeHeader string, fileSize int64) (*rangeRequest, error) {
+	if rangeHeader == "" {
+		return nil, nil
+	}
+
+	// Remove "bytes=" prefix if present
+	rangeStr := strings.TrimPrefix(rangeHeader, "bytes=")
+
+	// Split into start and end
+	parts := strings.Split(rangeStr, "-")
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid range format")
+	}
+
+	var start, end int64
+	var err error
+
+	// Parse start
+	if parts[0] != "" {
+		start, err = strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid start value")
+		}
+	}
+
+	// Parse end
+	if parts[1] != "" {
+		end, err = strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid end value")
+		}
+	} else {
+		end = fileSize - 1
+	}
+
+	// Validate range
+	if start < 0 {
+		start = fileSize + start
+		if start < 0 {
+			return nil, fmt.Errorf("invalid range: start position out of bounds")
+		}
+	}
+	if end >= fileSize {
+		end = fileSize - 1
+	}
+	if start > end {
+		return nil, fmt.Errorf("invalid range: start > end")
+	}
+
+	return &rangeRequest{
+		start:  start,
+		end:    end,
+		length: end - start + 1,
+	}, nil
 }
 
 func checkExists(filename string) bool {
@@ -133,7 +196,7 @@ func fetchFile(filename string) (n int64, err error) {
 	return bytes, nil
 }
 
-func serveFile(w http.ResponseWriter, filename string, eTags []string, ifModifiedSince time.Time, result string) (n int64, err error) {
+func serveFile(w http.ResponseWriter, r *http.Request, filename string, eTags []string, ifModifiedSince time.Time, result string) (n int64, err error) {
 	metaFile := path.Join(cacheDir, filename+".meta")
 	metaData, err := os.ReadFile(metaFile)
 	if err != nil {
@@ -151,6 +214,7 @@ func serveFile(w http.ResponseWriter, filename string, eTags []string, ifModifie
 	if err != nil {
 		return 0, err
 	}
+	defer file.Close()
 
 	var bytes int64
 
@@ -208,8 +272,17 @@ func serveFile(w http.ResponseWriter, filename string, eTags []string, ifModifie
 		}
 	}
 
+	// Handle range request
+	rangeHeader := r.Header.Get("Range")
+	rangeReq, err := parseRangeHeader(rangeHeader, meta.Size)
+	if err != nil {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(fmt.Sprintf("Invalid range request: %v", err)))
+		return 0, err
+	}
+
 	w.Header().Set("Content-Type", meta.ContentType)
-	w.Header().Set("Content-Length", strconv.FormatInt(meta.Size, 10))
 	w.Header().Set("Last-Modified", meta.LastModified.Format(http.TimeFormat))
 	w.Header().Set("Cache-Control", "max-age=31536000")
 	w.Header().Set("Pragma", "cache")
@@ -217,12 +290,30 @@ func serveFile(w http.ResponseWriter, filename string, eTags []string, ifModifie
 	w.Header().Set("ETag", meta.ETag)
 	w.Header().Set("X-Cache", SOFTWARE+" "+VERSION+"; "+result)
 
-	currentTime := time.Now()
-	_ = os.Chtimes(metaFile, currentTime, currentTime)
+	if rangeReq != nil {
+		// Seek to the start position
+		_, err = file.Seek(rangeReq.start, 0)
+		if err != nil {
+			log.Printf("error seeking file: %v", err)
+			return 0, err
+		}
 
-	bytes, err = io.Copy(w, file)
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", rangeReq.start, rangeReq.end, meta.Size))
+		w.Header().Set("Content-Length", strconv.FormatInt(rangeReq.length, 10))
+		w.WriteHeader(http.StatusPartialContent)
+
+		// Create a limited reader for the range
+		reader := io.LimitReader(file, rangeReq.length)
+		bytes, err = io.Copy(w, reader)
+	} else {
+		w.Header().Set("Content-Length", strconv.FormatInt(meta.Size, 10))
+		bytes, err = io.Copy(w, file)
+	}
+
 	if err != nil {
+		log.Printf("error copying file: %v", err)
 		return bytes, err
 	}
+
 	return bytes, nil
 }
