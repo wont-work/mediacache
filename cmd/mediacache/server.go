@@ -43,7 +43,7 @@ func handleCache(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	query := r.URL.RawQuery
 
-	filename := path + "?" + query
+	filename, _ := strings.CutSuffix(path + "?" + query, "?")
 
 	if filename == "/" {
 		getRoot(w, r)

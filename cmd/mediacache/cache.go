@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,8 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"crypto/sha256"
-	"encoding/base64"
 )
 
 const (
