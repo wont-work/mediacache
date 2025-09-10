@@ -139,10 +139,10 @@ func fetchFile(origFilename string) (n int64, err error) {
 	for _, upstream := range upstreams {
 		url = joinUrl(upstream, origFilename)
 		resp, err = httpClient.Get(url)
+		log.Printf("url %s: %v", url, err)
 		if err == nil && resp.StatusCode == 200 {
 			break
 		}
-		log.Printf("url %s: %v", url, err)
 	}
 
 	if err != nil {
@@ -206,7 +206,8 @@ func fetchFile(origFilename string) (n int64, err error) {
 	return bytes, nil
 }
 
-func serveFile(w http.ResponseWriter, r *http.Request, filename string, eTags []string, ifModifiedSince time.Time, result string) (n int64, err error) {
+func serveFile(w http.ResponseWriter, r *http.Request, origFilename string, eTags []string, ifModifiedSince time.Time, result string) (n int64, err error) {
+	filename := hashUrl(origFilename)
 	metaFile := path.Join(cacheDir, filename+".meta")
 	metaData, err := os.ReadFile(metaFile)
 	if err != nil {
