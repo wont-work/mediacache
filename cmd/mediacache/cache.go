@@ -108,7 +108,7 @@ func hashUrl(url string) string {
 	return strings.ReplaceAll(encoded, "=", "")
 }
 
-func checkExists(string) bool {
+func checkExists(origFilename string) bool {
 	filename := hashUrl(origFilename)
 	metaFile := path.Join(cacheDir, filename+".meta")
 	_, err := os.Stat(metaFile)
