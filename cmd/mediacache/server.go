@@ -69,8 +69,6 @@ func handleCache(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filename = hashUrl(filename)
-
 	// Acquire a read lock for the file
 	mutex.RLock()
 	lock, ok := locks[filename]
