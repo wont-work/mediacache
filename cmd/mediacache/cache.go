@@ -108,7 +108,8 @@ func hashUrl(url string) string {
 	return strings.ReplaceAll(encoded, "=", "")
 }
 
-func checkExists(filename string) bool {
+func checkExists(origFilename string) bool {
+	filename := hashUrl(origFilename)
 	metaFile := path.Join(cacheDir, filename+".meta")
 	_, err := os.Stat(metaFile)
 	if err != nil {
@@ -197,7 +198,6 @@ func fetchFile(origFilename string) (n int64, err error) {
 	}
 	metaData = append(metaData, '\n')
 
-	metaFile = path.Join(cacheDir, filename+".meta")
 	err = os.WriteFile(metaFile, metaData, 0644)
 	if err != nil {
 		return bytes, err
